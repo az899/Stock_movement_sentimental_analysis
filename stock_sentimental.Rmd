@@ -1,0 +1,651 @@
+---
+title: "ass3"
+author: "mbui0014"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# necessary packages will be installed
+```{r}
+#: package for get stock prices and calculate technical indicators 
+install.packages('quantmod')
+install.packages('TTR')
+#: package for date operation
+install.packages('lubridate')
+#: package require to install package gdeltr2
+install.packages("devtools")
+#: package to work with function and vector
+install.packages('purrr')
+#: package to perfrom sentimal analysis
+install.packages("textcat")
+install.packages('tidytext')
+#: package to build interactive map
+install.packages("plotly")
+install.packages("reshape2")
+```
+I. Construct signal processing by using bollingerband
+```{r}
+# Installing and loading the quantmod library
+library(quantmod)
+library(TTR)
+library(lubridate)
+library(ggplot2)
+```
+
+#: extracting the stock data in 360 days
+```{r}
+end_date <- as.Date("2023-10-07")
+start_date <- as.Date(end_date) - 360
+getSymbols("AAPL", from = start_date, to = end_date)
+```
+Code explanation: 
+
+- determine the start_date and end_date for which stock data will be collected, specifically, the 360 days leading up to October 7, 2023.
+
+- retrieve Apple's stock data using getSymbols from the quantmod library
+
+#: Applying bollingerband (build upon SMA 20) and SMA 10 to calculate the bullish and bearish and neutral of the stock market in long and short time frame
+```{r}
+n <- 20
+k <- 2
+
+AAPL$SMA_20 <- SMA(Cl(AAPL), n = n)
+AAPL$std_dev <- runSD(Cl(AAPL), n = n)
+AAPL$upper_band <- AAPL$SMA + k * AAPL$std_dev
+AAPL$lower_band <- AAPL$SMA - k * AAPL$std_dev
+AAPL$SMA_10 <- SMA(Cl(AAPL), n=10)  # 10-day simple moving average
+```
+
+Code explanation:
+
+- After obtaining the stock data, we calculate the Bollinger Bands. Bollinger Bands are volatility bands placed above and below a moving average. The volatility is determined using the standard deviation. Here we are using a 20-day simple moving average (SMA_20) and a standard deviation (std_dev). We calculate the upper and lower Bollinger Bands using this information. Along with the Bollinger Bands, We also calculate a 10-day simple moving average (SMA_10).
+
+#: convert AAPL data into dataframe and input date to modify and build visualization
+```{r}
+apple_data <- as.data.frame(AAPL)
+apple_data$Date <- index(AAPL)
+```
+
+code explanation:
+- converting the stock data to a more convenient data frame format and adding a Date column for visualization purposes.
+
+#: classify signal
+```{r}
+# Trends
+apple_data$trend <- ifelse(apple_data$AAPL.Close > apple_data$upper_band, "Bullish", 
+                    ifelse(apple_data$AAPL.Close < apple_data$lower_band, "Bearish", "Neutral"))
+apple_data$SMA_trend <- ifelse(apple_data$AAPL.Close > apple_data$SMA_10, "Bullish", 
+                        ifelse(apple_data$AAPL.Close < apple_data$SMA_10, "Bearish", "Neutral"))
+```
+
+Code explanation:
+
+For the signals:
+
+If the stock's closing price (AAPL.Close) is above the upper Bollinger Band, it's labeled as "Bullish".
+If below the lower band, it's "Bearish".
+Otherwise, it's "Neutral".
+
+Similarly, based on the 10-day SMA:
+
+If the closing price is above the 10-day SMA, it's labeled "Bullish".
+If below, it's "Bearish".
+Otherwise, it's "Neutral".
+
+#: construct visualization of stock market with 2 signal processing bollingerband and SMA 10 days
+```{r}
+# Plot
+ggplot(apple_data, aes(x = Date)) +
+  geom_line(aes(y = AAPL.Close, color = "Stock Price")) +
+  geom_ribbon(aes(ymin = lower_band, ymax = upper_band, fill = "Bollinger Bands"), alpha = 0.2) +
+  geom_line(aes(y = SMA_20, color = "Bollinger Middle")) +
+  geom_line(aes(y = SMA_10, color = "10-day SMA"), linetype="dashed") +  
+  scale_color_manual(values = c("Stock Price" = "blue", "Bollinger Middle" = "red", "10-day SMA" = "green")) +
+  scale_fill_manual(values = c("Bollinger Bands" = "#7F7F7F")) +
+  labs(color = "Legend", fill = "Legend") +
+  theme_minimal()
+```
+
+Code explanation:
+
+- a visual representation of Apple's stock price in relation to the Bollinger Bands and the 10-day SMA, with the respective bullish, bearish, or neutral signals derived from these indicators.
+
+#: construct the divergence between bollingerband and 10 days SMA, which will give divergence signal
+```{r}
+apple_data$combined_signal <- ifelse((apple_data$trend == "Bullish" & apple_data$SMA_trend == "Bearish") |
+                                     (apple_data$trend == "Bearish" & apple_data$SMA_trend == "Bullish"),
+                                     "Divergent",
+                                     ifelse(apple_data$trend == "Neutral" & 
+                                            (apple_data$SMA_trend == "Bullish" | apple_data$SMA_trend == "Bearish"),
+                                            apple_data$SMA_trend,
+                                            "Non-Divergent"))
+```
+
+Code explanation:
+
+- The ifelse() function is a conditional function that checks the test condition for each element of a vector. If the condition is TRUE, it returns the corresponding element from the yes vector, and if FALSE, from the no vector. In the code, it's used multiple times to evaluate the conditions related to the Bollinger Bands and 10-day SMA signals, classifying them as "Bullish", "Bearish", or "Neutral".
+
+```{r}
+library(dplyr)
+```
+
+#: store the divergence signal - where the signal from both signal are weak
+```{r}
+# Filtering points where SMA is bullish/bearish while Bollinger Bands are neutral
+highlighted_data <- apple_data %>%
+  filter((trend == "Neutral" & (SMA_trend == "Bullish" | SMA_trend == "Bearish")))
+```
+
+Code explanation:
+
+- The filter() function from the dplyr package is applied to filter rows based on specified conditions. In this code snippet, it's isolating the rows of apple_data where the Bollinger Bands signal is "Neutral", but the 10-day SMA indicates a direction, either "Bullish" or "Bearish".
+
+#: Visualize the points on the plot where the SMA is bullish/bearish while the Bollinger Bands are neutral.
+```{r}
+# Plotting
+ggplot(apple_data, aes(x = Date)) +
+  geom_line(aes(y = AAPL.Close, color = "Stock Price")) +
+  geom_ribbon(aes(ymin = lower_band, ymax = upper_band, fill = "Bollinger Bands"), alpha = 0.2) +
+  geom_line(aes(y = SMA_20, color = "Bollinger Middle"), size = 1) +
+  geom_line(aes(y = SMA_10, color = "SMA 10"), linetype = "dashed", size = 1) +
+  geom_point(data = highlighted_data, aes(y = AAPL.Close, color = SMA_trend), size = 3) + 
+  scale_color_manual(values = c("Stock Price" = "blue", 
+                                "Bollinger Middle" = "#FFC000",
+                                "SMA 10" = "green",
+                                "Bullish" = "forestgreen",
+                                "Bearish" = "firebrick3")) +
+  scale_fill_manual(values = c("Bollinger Bands" = "#7F7F7F")) +
+  labs(color = "Legend", fill = "Legend") +
+  theme_minimal()
+```
+Code explanation:
+
+- The ggplot() function is the primary tool for creating plots in the ggplot2 package. It initializes a ggplot object using provided data. The geom_line() function to plot the stock's closing price, the 20-day SMA (middle of the Bollinger Bands), and the 10-day SMA.The geom_ribbon() function illustrates the area between the upper and lower Bollinger Bands. Then the geom_point() function introduces to emphasize divergence points where the stock's closing price direction (as indicated by the 10-day SMA) differs from its volatility (Bollinger Bands).
+
+#: visualize the non-divergence point, the signal is strong
+```{r}
+# Visualizing the data
+ggplot(apple_data, aes(x = Date)) +
+  
+  # Stock Price and Bollinger Bands
+  geom_line(aes(y = AAPL.Close, color = "Stock Price")) +
+  geom_ribbon(aes(ymin = lower_band, ymax = upper_band, fill = "Bollinger Bands"), alpha = 0.2) +
+  geom_line(aes(y = SMA_10, color = "SMA_10")) +
+  
+  
+  # Marking Non-Divergent Points
+  geom_point(data = subset(apple_data, combined_signal == "Non-Divergent"), 
+             aes(y = AAPL.Close), color = "green", size = 3, shape = 19, alpha = 0.7) +
+
+  # Miscellaneous aesthetics
+  scale_color_manual(values = c("Stock Price" = "blue", "SMA" = "black")) +
+  scale_fill_manual(values = c("Bollinger Bands" = "#7F7F7F")) +
+  labs(color = "Legend", fill = "Legend") +
+  theme_minimal()
+```
+Code explanation:
+
+- Generally it is similar to the divergent point highlight graph. There are some difference that is:
+
+- The subset() function filters the dataset based on a specified condition. It's used to extract rows from apple_data that match either "Divergent" or "Non-Divergent" in the combined_signal column for marking on the plot.
+
+
+#: store the stock market movement to the local disk
+```{r}
+write.csv(apple_data, file = "apple_stockmovement_data.csv", row.names = FALSE)
+```
+
+code explanation:
+
+- Take the apple_data dataframe, which holds the stock market movement data, and writes it to a CSV file named "apple_stockmovement_data.csv" on the local disk. 
+
+#: work on the csv file
+```{r}
+apple_data_loaded <- read.csv("apple_stockmovement_data.csv")
+```
+
+```{r}
+non_divergent_data_loaded <- subset(apple_data_loaded, combined_signal == "Non-Divergent")
+```
+
+code explanation:
+
+- The subset() function filters the dataset based on a specified condition, which is Non-Divergent
+
+II. fetching news to perform sentimental analysis
+
+#: extract the non-divergent date to fetch the news
+```{r}
+#: Extract dates for fetching news
+dates_array <- as.character(non_divergent_data_loaded$Date)
+```
+code explanation:
+- convert the dates found in the non_divergent_data_loaded$Date column into character strings to store in an array to later fetch news articles.
+
+#: we will apply gdeltr2 to extract news from gdeltr open source
+#: go through process to extract gdeltr2 from github
+```{r}
+devtools::install_github("hadley/devtools")
+devtools::install_github("hafen/trelliscopejs")
+devtools::install_github("abresler/gdeltr2")
+```
+Code explanation:
+
+- directly install R packages from GitHub repositories
+
+- "hadley/devtools": Reinstalling the devtools package itself, possibly to ensure you have the latest version.
+
+- "hafen/trelliscopejs": Installing the trelliscopejs package. This package is is a dependency for gdeltr2.
+
+- "abresler/gdeltr2": Installing the gdeltr2 package. This package provides functions to fetch data from the GDELT (Global Database of Events, Language, and Tone) project, which is a global database that monitors and archives news articles and broadcasts from around the world.
+
+#:A tool to efficently and interactively interface with GDELT data
+```{r}
+library(gdeltr2)
+```
+#: fetch apple news on the date that we have non-divergent signal
+```{r}
+#: creating news fetching function
+fetch_apple_news_gdelt <- function(date) {
+  # Fetching event data related to Apple from GDELT for the specified date
+  gdelt_data <- get_data_gdelt_periods_event(
+    periods = as.Date(date)
+  )
+  
+  # Filter events related to Apple or AAPL
+  apple_related_events <- gdelt_data[
+    (grepl("Apple", gdelt_data$nameActor1, ignore.case = TRUE) | 
+     grepl("Apple", gdelt_data$nameActor2, ignore.case = TRUE) |
+     grepl("AAPL", gdelt_data$nameActor1, ignore.case = TRUE) | 
+     grepl("AAPL", gdelt_data$nameActor2, ignore.case = TRUE)), 
+  ]
+  
+  return(apple_related_events)
+}
+```
+
+Code explanation:
+
+- Creating a functon fetch_apple_news_gdelt(), which takes in a single parameter: date,to fetch news related to Apple from the GDELT database for a specific date. In the function, there is get_data_gdelt_periods_event(), which fetches event data from the GDELT database for a specified time period.
+
+- The grepl() function is used to filter the gdelt_data dataset for events related to Apple. It checks both the nameActor1 and nameActor2 columns for mentions of "Apple" or "AAPL" where as the pattern matching is case-insensitive
+
+#: store all the extract news in a list
+```{r}
+apple_news_list <- lapply(dates_array, fetch_apple_news_gdelt)
+```
+code explanation:
+- Applying the fetch_apple_news_gdelt() function to each date in the dates_array.
+ 
+#: created a integrated dataset for fetched news
+```{r}
+# Combining all data frames in the list
+combined_news_data_raw <- do.call(rbind, apple_news_list)
+```
+code explanation:
+-  Combining (by rows) all the data frames contained within the apple_news_list into a single unified data frame. The resulting data frame, combined_news_data_raw, has all the news entries from each of the individual date-specific data frames.
+
+```{r}
+print(names(combined_news_data_raw))
+```
+
+```{r}
+# Saving the data as a CSV
+write.csv(combined_news_data_raw, "apple_news_data.csv", row.names = FALSE)
+```
+code explanation:
+
+- Take the combines new data, which holds all the news on the date that has non-divergent signal, and writes it to a CSV file named "apple_news_data.csv" on the local disk. 
+
+```{r}
+combined_news_data <- read.csv("apple_news_data.csv")
+```
+
+#: initiate extract content from fetched url
+```{r}
+library(rvest)
+```
+
+```{r}
+# Function to extract news content from a URL
+extract_content <- function(url) {
+  content <- NULL
+  # Use tryCatch to handle errors, in case the webpage doesn't load or there's some other error
+  tryCatch({
+    content <- read_html(url) %>% 
+               html_text()
+  }, error = function(e) {
+    message("Error in fetching URL: ", url)
+  })
+  return(content)
+}
+```
+code explanation:
+
+- Using the rvest package, to extract textual content from a specified webpage URL. The function extract_content attempts to read and extract the content of the provided URL by using read_html(url) %>% html_text() function. In cases where the webpage cannot be fetched or read due to an error, the function gracefully handles the situation by displaying an error message without halting the entire script by using tryCatch function.
+
+```{r}
+# Applying the function to the `urlSource` column
+combined_news_data$newsContent <- sapply(combined_news_data$urlSource, extract_content)
+```
+```{r}
+library(purrr)
+```
+
+#: handle non char column
+```{r}
+combined_news_data$Content <- map_chr(combined_news_data$newsContent, ~paste(., collapse = ","))
+```
+code explanation:
+
+- leveraging the purrr package, performs data transformation on the combined_news_data dataframe. The function map_chr is used to consolidate and collapse multiple character strings from the newsContent column into a single comma-separated string. This processed data is stored in a new Content column
+
+#: remove unable stored data
+```{r}
+combined_news_data <- combined_news_data %>% select(-newsContent)
+```
+
+#: we have avgTone from the Gdelt, which is another type of sentimental analysis which has been conducted by GDELT project, but for further assurance, we should perform sentimental analysis upon the content
+```{r}
+library(tidyverse)
+library(tidytext)
+```
+#: break down the content
+```{r}
+tidied_data <- combined_news_data %>%
+  unnest_tokens(word, Content)
+```
+
+
+```{r}
+library(textdata)
+```
+
+#:Straight forward lexicons, there are more can be applied, AFINN provide a single score for each word, suggesting to apply other lexicons and make comparision is recommended
+```{r}
+afinn <- get_sentiments("afinn")
+```
+
+
+```{r}
+sentiment_data <- tidied_data %>%
+  inner_join(get_sentiments("afinn"))
+```
+Code explanation:
+
+- The provided code leverages the tidytext and textdata packages to process and analyze the sentiment of the news content present in the combined_news_data dataframe.The news content is tokenized into individual words by using the unnest_tokens() function from the tidytext package to break down the Content column of the combined_news_data dataframe into individual words. Then, using get_sentiments() function fetches the "afinn" lexicon which assigns a score to each word indicating its sentiment, to evaluate the sentiment of the tokenized words. Lastly use inner_join() function to join the tidied_data dataframe with the "afinn" sentiment lexicon. This results in a dataframe that retains only the words that have corresponding sentiment scores in the AFINN lexicon.
+
+#: sum up sentiment scores for each document
+```{r}
+sentiment_summary <- sentiment_data %>%
+  group_by(idGlobalEvent) %>%
+  summarise(sentiment_score = sum(value))
+```
+
+```{r}
+sentiment_summary
+```
+
+```{r}
+# First, aggregate dateEvent and avgTone by idGlobalEvent
+avgTone_date_summary <- combined_news_data %>%
+  group_by(idGlobalEvent) %>%
+  summarise(dateEvent = first(dateEvent), # Assuming each idGlobalEvent corresponds to one date
+            avgTone_score = mean(avgTone, na.rm = TRUE))
+```
+
+```{r}
+# Merge the sentiment_summary with the avgTone_summary
+merged_data <- left_join(sentiment_summary, avgTone_date_summary, by = "idGlobalEvent")
+```
+
+code explanation:
+- the sentiment scores from the AFINN lexicon are aggregated for each document by the idGlobalEvent Using the group_by() function. Then calculates the total sentiment score for each of these documents by using summarise() function. Aggregates the dateEvent and avgTone for each unique idGlobalEvent. Meanwhile, the average tone for each event is calculated using the mean() function. Using the left_join() function, the summarized data is combined into a unified dataframe merged_data with columns representing the event ID, sentiment score, event date, and average tone.
+ 
+#: reorganize the columns
+```{r}
+dataset <- merged_data %>%
+  select(dateEvent, sentiment_score, avgTone_score)
+```
+
+```{r}
+merged_data
+```
+
+
+#: since the score of avg tone and sentiment score has different measure scale, hence normalization scores using Z-score is required
+```{r}
+dataset <- dataset %>%
+  mutate(sentiment_score_normalized = scale(sentiment_score),
+         avgTone_score_normalized = scale(avgTone_score))
+```
+
+code explanation:
+
+- Using the mutate() function, the sentiment scores and average tone scores are normalized using the scale() function, which performs Z-score normalization.
+
+```{r}
+dataset_grouped <- dataset %>%
+  group_by(dateEvent) %>%
+  summarise(
+    sentiment_score_mean = mean(sentiment_score, na.rm = TRUE),
+    avgTone_score_mean = mean(avgTone_score, na.rm = TRUE),
+    sentiment_score_normalized_mean = mean(sentiment_score_normalized, na.rm = TRUE),
+    avgTone_score_normalized_mean = mean(avgTone_score_normalized, na.rm = TRUE)
+  )
+```
+Code explanation:
+- Using the group_by() function, the dataset is organized into groups based on unique dateEvent values then Summarizing Sentiment and Tone Scores to computes various means for each group
+
+#: Using normalization score to classify the market sentiment 
+```{r}
+dataset_grouped <- dataset_grouped %>%
+  mutate(sentiment_label_normalized = ifelse(sentiment_score_normalized_mean > 0, "Bullish", "Bearish"),
+         avgTone_label_normalized = ifelse(avgTone_score_normalized_mean > 0, "Bullish", "Bearish"))
+```
+
+code explanation:
+- Using the normalized scores from the dataset, the code classifies the market sentiment for each unique event date.
+
+```{r}
+dataset_grouped
+```
+#: perform correlation with non-divergent signal and 2 signal from sentiment and avg tone
+#Convert Data Types and Merge Dataframe
+```{r}
+# Select necessary columns
+selected_dataset <- dataset_grouped %>% select(dateEvent, sentiment_label_normalized, avgTone_label_normalized)
+selected_non_divergent <- non_divergent_data_loaded %>% select(Date, trend)
+
+# Convert Date column to Date type for consistency
+selected_non_divergent$Date <- as.Date(selected_non_divergent$Date)
+selected_dataset$dateEvent <- as.Date(selected_dataset$dateEvent)
+```
+
+```{r}
+# Merge datasets based on the date
+final_data <- left_join(selected_dataset, selected_non_divergent, by = c("dateEvent" = "Date"))
+```
+
+code explanation:
+
+- Preparing the datasets for a correlation analysis between the non-divergent signal and the two signals from sentiment and average tone.  Using the select() function, the dataset_grouped dataframe is filtered to retain only the dateEvent, sentiment_label_normalized, and avgTone_label_normalized columns. With the non_divergent_data_loaded dataframe, only the Date and trend columns are retained. Then as.Date function to be perform for date type conversion for consistency. Finally, the left_join() function merges the two dataframes (selected_dataset and selected_non_divergent) based on the date columns.
+
+```{r}
+final_data
+```
+```{r}
+# Convert labels to numerical values
+final_data$sentiment_encoded <- ifelse(final_data$sentiment_label_normalized == "Bullish", 1, 0)
+final_data$avgTone_encoded <- ifelse(final_data$avgTone_label_normalized == "Bullish", 1, 0)
+final_data$trend_encoded <- ifelse(final_data$trend == "Bullish", 1, 0)
+```
+
+```{r}
+# Calculate correlation
+correlation_sentiment_trend <- cor(final_data$sentiment_encoded, final_data$trend_encoded, use="complete.obs", method="pearson")
+correlation_avgTone_trend <- cor(final_data$avgTone_encoded, final_data$trend_encoded, use="complete.obs", method="pearson")
+```
+
+```{r}
+correlation_sentiment_trend
+correlation_avgTone_trend
+```
+code explanation:
+
+- Encoding the "Bullish" and "Bearish" labels into numerical values, where "Bullish" corresponds to the value 1, and "Bearish" is encoded as 0. Then computes the Pearson correlation coefficients between:
+
+The encoded sentiment labels and the trend data (correlation_sentiment_trend).
+The encoded average tone labels and the trend data (correlation_avgTone_trend).
+
+The cor() function is utilized to calculate these correlations. It considers only the complete observations (pairs of values) without missing data (use="complete.obs") and applies the Pearson method for the computation.
+
+#: visualize
+```{r}
+viscombine_df <- merge(apple_data, final_data, by.x = "Date", by.y = "dateEvent", all.x = TRUE)
+```
+
+
+```{r}
+library(plotly)
+```
+```{r}
+# Create a new dataframe for visualization
+visplot_df <- viscombine_df
+
+# Add the detailed combined_signal column to the new dataframe
+visplot_df$combined_signal_detail <- ifelse(visplot_df$combined_signal == "Non-Divergent" & visplot_df$trend.x == "Bullish", "Non-Divergent Bullish",
+                                           ifelse(visplot_df$combined_signal == "Non-Divergent" & visplot_df$trend.x == "Bearish", "Non-Divergent Bearish",
+                                                  visplot_df$combined_signal))
+
+```
+
+```{r}
+install.packages("animation")
+```
+
+```{r}
+library(animation)
+```
+
+
+```{r}
+# Create the ggplot
+p <- ggplot(visplot_df, aes(x = Date, y = AAPL.Close)) +
+
+  geom_line(aes(color = "Stock Price")) +
+
+  # Bollinger Bands
+  geom_ribbon(aes(ymin = lower_band, ymax = upper_band, fill = "Bollinger Bands"), alpha = 0.2) +
+
+  # SMA_10
+  geom_line(aes(y = SMA_10, color = "SMA_10")) +
+
+  # Divergent and Non-Divergent Points
+  geom_point(data = subset(visplot_df, combined_signal == "Divergent"), 
+             aes(color = "Divergent Signal"), shape = 19, size = 3) +
+  geom_point(data = subset(visplot_df, combined_signal_detail == "Non-Divergent Bullish"), 
+             aes(color = "Non-Divergent Bullish"), shape = 19, size = 3) +
+  geom_point(data = subset(visplot_df, combined_signal_detail == "Non-Divergent Bearish"), 
+             aes(color = "Non-Divergent Bearish"), shape = 19, size = 3) +
+
+  # Sentiment and AvgTone labels
+  geom_point(data = subset(visplot_df, !is.na(sentiment_label_normalized)), 
+             aes(color = sentiment_label_normalized, shape = "Sentiment"), size = 4) +
+  geom_point(data = subset(visplot_df, !is.na(avgTone_label_normalized)), 
+             aes(color = avgTone_label_normalized, shape = "AvgTone"), size = 4) +
+
+  # Legends and Themes
+  scale_color_manual(values = c("Stock Price" = "blue", "SMA_10" = "orange", "Divergent Signal" = "red", 
+                                "Non-Divergent Bullish" = "green", "Non-Divergent Bearish" = "purple",
+                                "Bullish" = "gold", "Bearish" = "darkred")) + # Colors for Sentiment and AvgTone can be adjusted accordingly
+  theme_minimal()
+
+# Convert the ggplot object to a plotly object
+plotly_obj <- ggplotly(p, tooltip = "y")
+
+# Display the interactive plot
+plotly_obj
+```
+Code explanation:
+
+- Creates an intricate, interactive plot visualizing Apple's stock price with various technical indicators and sentiment analyses by using ggplotly after using ggplot to creating a visual presentation of the Apple Stock price
+
+```{r}
+# Define the function to generate the plot for a given subset of data
+generate_plot <- function(temp_data) {
+  p <- ggplot(temp_data, aes(x = Date, y = AAPL.Close)) +
+    geom_line(aes(color = "Stock Price")) +
+    geom_ribbon(aes(ymin = lower_band, ymax = upper_band, fill = "Bollinger Bands"), alpha = 0.2) +
+    geom_line(aes(y = SMA_10, color = "SMA_10")) +
+    geom_point(data = subset(temp_data, combined_signal == "Divergent"), 
+               aes(color = "Divergent Signal"), shape = 19, size = 3) +
+    geom_point(data = subset(temp_data, combined_signal_detail == "Non-Divergent Bullish"), 
+               aes(color = "Non-Divergent Bullish"), shape = 19, size = 3) +
+    geom_point(data = subset(temp_data, combined_signal_detail == "Non-Divergent Bearish"), 
+               aes(color = "Non-Divergent Bearish"), shape = 19, size = 3) +
+    geom_point(data = subset(temp_data, !is.na(sentiment_label_normalized)), 
+               aes(color = sentiment_label_normalized, shape = "Sentiment"), size = 4) +
+    geom_point(data = subset(temp_data, !is.na(avgTone_label_normalized)), 
+               aes(color = avgTone_label_normalized, shape = "AvgTone"), size = 4) +
+    scale_color_manual(values = c("Stock Price" = "blue", "SMA_10" = "orange", "Divergent Signal" = "red", 
+                                  "Non-Divergent Bullish" = "green", "Non-Divergent Bearish" = "purple",
+                                  "Bullish" = "gold", "Bearish" = "darkred")) +
+    theme_minimal()
+  
+  return(p)
+}
+
+# Capture frames and save as GIF
+saveGIF({
+  for (i in unique(visplot_df$Date)) {
+    # Filter data up to the current date
+    temp_data <- visplot_df[visplot_df$Date <= i, ]
+    
+    # Generate and print the plot for the current subset of data
+    p <- generate_plot(temp_data)
+    print(p)
+    
+    ani.pause(0.1)  # Pause for a short duration between frames
+  }
+}, movie.name = "animated_plot.gif", interval = 0.1, ani.width = 800, ani.height = 600)
+```
+Code explanation:
+
+Similar visualization code, but this used to extract gif image for presentation purpose
+
+#: visualize correlation
+
+```{r}
+library(reshape2)
+```
+
+```{r}
+# Convert the data to long format
+long_data <- melt(final_data, id.vars = "dateEvent", 
+                  measure.vars = c("sentiment_encoded", "avgTone_encoded"), 
+                  variable.name = "variable", value.name = "value")
+```
+
+
+```{r}
+# Count the combinations
+count_data <- final_data %>%
+  group_by(sentiment_label_normalized, avgTone_label_normalized, trend) %>%
+  summarise(count = n())
+```
+
+```{r}
+# Plot
+q <- ggplot(count_data, aes(x = trend, y = count, fill = interaction(sentiment_label_normalized, avgTone_label_normalized))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Combinations of Sentiment, AvgTone, and Trend", x = "Trend", y = "Count") +
+  theme_minimal()
+
+print(q)
+```
+
+code explanation:
+
+- Using the melt function to convert final_data dataframe into a long format, then got grouped by the normalized sentiment label, normalized average tone label, and trend. The counts of each unique combination of these variables are computed using the summarise function. The result is stored in the count_data dataframe. All of the correlation data is visualized using the bar plot. That help to provide a visual representation of the relationship between sentiment, average tone, and market trends by displaying the count of combinations of these three variables in a bar plot format.
+
+
